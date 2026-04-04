@@ -7,7 +7,7 @@ on:
  
   pull_request:
     branches:
-      - main_hello
+      - main
     types:
       - closed
     
@@ -16,9 +16,10 @@ jobs:
   
     if: github.event.pull_request.merged == true
     # GitHub provides a fresh runner for the job.
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
     steps:
       - name: Say hello
         # This single step is enough to show a full workflow run.
-        run: echo "Hello from GitHub Actions ,,"
+        run: echo "Hello from GitHub Actions noran,,"
