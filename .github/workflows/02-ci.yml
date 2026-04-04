@@ -4,7 +4,7 @@ name: 02 CI Workflow
 
 on:
   schedule:
-    - cron: '25 09 * * *'
+    - cron: '21 09 * * *'
   # Run automatically when app code, tests, or this workflow file changes.
   push:
     paths:
