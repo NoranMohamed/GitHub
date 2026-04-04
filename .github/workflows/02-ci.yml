@@ -31,3 +31,20 @@ jobs:
       - name: Run tests
         # This is the key verification step in the CI workflow.
         run: python -m unittest discover -s tests -v
+        
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: List files in repository
+        run: ls -R
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Show runner date
+        run: date
