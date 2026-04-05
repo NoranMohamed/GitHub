@@ -1,67 +1,58 @@
-# This workflow completes the story by delivering the saved package.
-# It starts after the build workflow finishes successfully.
-name: 04 Deploy Workflow
+name: 02 CD - Build and Deploy
 
 on:
-  workflow_run:
-    # Listen for the build workflow by name.
-    workflows: ["03 Build Artifact Workflow"]
-    # Start when the build workflow has completed.
-    types: [completed]
+  push:
+    branches: [ "main" ] # سيعمل فقط بعد الـ Merge بنجاح
 
-permissions:
-  # Read access is enough because this workflow only downloads artifacts and reads repo data.
-  actions: read
-  contents: read
+env:
+  ACR_LOGIN_SERVER: example.azurecr.io
+  IMAGE_NAME: tiny-health-app
+  AKS_NAMESPACE: demo
+  AKS_DEPLOYMENT: tiny-health-app
+  AKS_CONTAINER: tiny-health-app
 
 jobs:
-  deploy-package:
-    # Continue only when the build workflow succeeded.
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    # Use a fresh runner for the deployment simulation.
+  build-and-push:
     runs-on: ubuntu-latest
-
+    outputs:
+      image_tag: ${{ steps.image-tag.outputs.image_tag }}
     steps:
-      - name: Download build artifact
-        # Download the exact artifact produced by the build run.
-        uses: actions/download-artifact@v8
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: image-tag
+        run: echo "image_tag=run-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ACR
+        uses: docker/login-action@v3
         with:
-          name: tiny-health-app-image
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
-          path: downloaded-artifact
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Show downloaded files
-        # Quick visibility step so students can see what arrived from the build.
-        run: ls -R downloaded-artifact
-
-      - name: Load Docker image
-        # Turn the saved artifact file back into a Docker image.
-        run: docker load --input downloaded-artifact/tiny-health-app.tar
-
-      - name: Start container
-        # Start the exact same tagged image that the build workflow created.
+      - name: Build and push image
         run: |
-          docker run -d \
-            --name tiny-health-container \
-            -p 8000:8000 \
-            "tiny-health-app:run-${{ github.event.workflow_run.run_number }}"
+          docker build -t "${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${{ steps.image-tag.outputs.image_tag }}" .
+          docker push "${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${{ steps.image-tag.outputs.image_tag }}"
 
-      - name: Smoke test deployed app
-        # Retry a few times because app startup can take a moment.
+  deploy-to-aks:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
+
+      - name: Update AKS Deployment
         run: |
-          for attempt in 1 2 3 4 5; do
-            if curl --fail --silent http://127.0.0.1:8000/health; then
-              exit 0
-            fi
-            echo "Waiting for app to become ready..."
-            sleep 2
-          done
-          echo "App did not become ready in time."
-          exit 1
-
-      - name: Stop container
-        if: always()
-        # Clean up even if an earlier step fails.
-        run: docker rm -f tiny-health-container || true
+          kubectl set image "deployment/${{ env.AKS_DEPLOYMENT }}" \
+            "${{ env.AKS_CONTAINER }}=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}" \
+            -n "${{ env.AKS_NAMESPACE }}"
