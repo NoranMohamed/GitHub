@@ -1,0 +1,26 @@
+# 1. تعريف الـ ARG قبل أي استخدام لها في FROM
+ARG BASE_IMAGE=python:3.12-slim
+
+# 2. استخدام الـ ARG كقيمة للصورة الأساسية
+FROM ${BASE_IMAGE}
+
+# إعداد بيئة العمل
+WORKDIR /app
+
+# نسخ ملفات المتطلبات وتثبيتها
+COPY app/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# نسخ كود التطبيق والاختبارات
+COPY app/ ./app/
+COPY tests/ ./tests/
+
+# تعيين المتغيرات البيئية الضرورية
+ENV PYTHONPATH=/app
+ENV FLASK_APP=app/main.py
+
+# فتح البورت الذي يعمل عليه التطبيق
+EXPOSE 8000
+
+# أمر التشغيل الافتراضي
+CMD ["python", "-m", "flask", "run", "--host=0.0.0.0", "--port=8000"]
