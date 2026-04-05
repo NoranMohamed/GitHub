@@ -1,68 +1,56 @@
-# This workflow packages the verified app.
-# It is manual on purpose so Day 1 stays focused on CI.
-name: 03 Build Artifact Workflow
+# This is the first real CI workflow in the course.
+# It verifies a change by running tests on a fresh runner.
+# test the ci 
+name: 02 CI Workflow
 
 on:
-  workflow_run:
-    workflows: ["02 CI Workflow"] # يجب أن يكون نفس الاسم الموجود في خانة name في الملف الأول
-    types:
-      - completed
-  # Students start this workflow manually from the Actions tab.
+  push:
   workflow_dispatch:
 
-env:
-  # Keep common image values in one place so the build steps stay readable.
-  IMAGE_NAME: tiny-health-app
-  IMAGE_TAR: tiny-health-app.tar
-  ARTIFACT_NAME: tiny-health-app-image
-
 jobs:
+  test:
+    runs-on: ${{ matrix.os }}
 
-  build-package:
-    # Use a fresh GitHub-hosted runner for the build.
-    runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }} # لا يعمل إلا إذا نجح الـ CI
+    strategy:
+      
+      matrix:
+        os: [ubuntu-latest]
+        python-version: [3.12, 3.11]
     steps:
       - name: Check out repository
-        # Get the repository files onto the runner.
+        # Download the repository contents onto the runner.
         uses: actions/checkout@v6
-
+      
+      - name: List files
+        run: ls -la
       - name: Set up Python
-        # Prepare Python so the workflow can run the tests first.
+        # Prepare Python on the runner. This does not change the student laptop.
         uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+        with: 
+         python-version: ${{ matrix.python-version }}
 
       - name: Run tests
-        # Build only after the verification step passes.
+        # This is the key verification step in the CI workflow.
         run: python -m unittest discover -s tests -v
 
-      - name: Set image tag
-        # Create one simple tag so the image is easy to identify in this run.
-        id: image-tag
-        run: |
-          IMAGE_TAG="run-${GITHUB_RUN_NUMBER}"
-          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
-          
-      - name: Set up Docker Buildx
-        # هذا الأكشن ضروري لاستخدام ميزات بناء Docker المتقدمة وتصدير الملفات
-        uses: docker/setup-buildx-action@v3
+  build:
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: [3.12, 3.11]
 
-      - name: Build and export image to local folder
-        # استخدام الأكشن الرسمي بدلاً من shell commands
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          # نستخدم التاغ اللي جهزناه في الخطوة السابقة
-          tags: ${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.image_tag }}
-          # هنا بنقول للأكشن: "حول الصورة لملف tar واحفظها في المسار ده"
-          outputs: type=docker,dest=${{ env.IMAGE_TAR }}
-      - name: Upload build artifact
-        # Store the packaged output so a later workflow can use the exact same package.
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create artifact file
+        run: |
+          echo "Build for Python ${{ matrix.python-version }}" > output.txt
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
-       
-      
         with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.IMAGE_TAR }}
-          retention-days: 7
+          name: artifact-${{ matrix.python-version }}
+          path: output.txt
