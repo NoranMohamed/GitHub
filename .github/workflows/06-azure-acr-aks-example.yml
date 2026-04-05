@@ -16,6 +16,7 @@ env:
   AKS_DEPLOYMENT: tiny-health-app
   AKS_CONTAINER: tiny-health-app
 
+  
 jobs:
   verify:
     # CI still starts by checking whether the change is safe.
