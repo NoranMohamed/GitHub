@@ -1,0 +1,113 @@
+name: Complex CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ] # يعمل عند الـ Push على الـ main branch
+  workflow_dispatch: # يسمح بالتشغيل اليدوي
+
+env:
+  # قيم ثابتة نستخدمها في الـ Build والـ Deploy
+  IMAGE_NAME: complex-app
+  DOCKERFILE_PATH: Dockerfile.modular
+
+jobs:
+  # المرحلة الأولى: الاختبار والتحقق (CI)
+  ci-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir -r app/requirements.txt
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  # المرحلة الثانية: البناء والتغليف (Package)
+  # تعتمد هذه المرحلة على نجاح الـ ci-test
+  build-image:
+    needs: ci-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        # ننشئ تاغ فريد لكل run باستخدام رقم الـ Run
+        id: image-tag
+        run: echo "image_tag=run-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # هذه هي الخطوة الأهم: بناء الصورة باستخدام ARG
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          # تمرير الـ ARG من هنا. قمنا بتغيير الـ Python version لـ 3.11-slim للتجربة
+          build-args: |
+            BASE_IMAGE=python:3.11-slim
+          # نحفظ الصورة محلياً في الـ Runner ولا نرفعها للـ Registry حالياً
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.image_tag }}
+          outputs: type=docker,dest=/tmp/${{ env.IMAGE_NAME }}.tar
+
+      # نحفظ الـ .tar كـ Artifact لنستخدمه في الجوب التالي
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/${{ env.IMAGE_NAME }}.tar
+          retention-days: 1
+
+  # المرحلة الثالثة: التشغيل والتحقق (Deploy & Smoke Test)
+  # تعتمد هذه المرحلة على نجاح الـ build-image
+  deploy-and-test:
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      # ننزل الـ Artifact الذي يحتوي على الصورة
+      - name: Download image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      # نعيد تحميل الصورة محلياً في الـ Runner الجديد
+      - name: Load Docker image
+        run: docker load --input /tmp/${{ env.IMAGE_NAME }}.tar
+
+      # نشغل حاوية من الصورة التي بنيناها
+      - name: Start container
+        run: |
+          docker run -d \
+            --name app-container \
+            -p 8000:8000 \
+            "${{ env.IMAGE_NAME }}:run-${GITHUB_RUN_NUMBER}"
+
+      # ننتظر قليلاً ثم نعمل اختبار الدخان (Smoke Test)
+      - name: Smoke test deployed app
+        run: |
+          echo "Waiting for app to start..."
+          sleep 5
+          if curl --fail --silent http://127.0.0.1:8000/health; then
+            echo "Smoke test passed!"
+            exit 0
+          else
+            echo "Smoke test failed!"
+            docker logs app-container # طباعة الـ logs في حال الفشل
+            exit 1
+          fi
+
+      # التنظيف النهائي
+      - name: Stop container
+        if: always()
+        run: docker rm -f app-container || true
